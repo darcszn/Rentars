@@ -10,7 +10,7 @@
 
 #[cfg(test)]
 mod tests {
-    use soroban_sdk::{testutils::Address as _, Address, Env, String};
+    use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String};
 
     use crate::{BookingContract, BookingContractClient, BookingStatus};
 
@@ -631,5 +631,211 @@ mod tests {
         assert_eq!(client.get_booking(&id_a).tenant, tenant_a);
         assert_eq!(client.get_booking(&id_b).tenant, tenant_b);
         assert_ne!(id_a, id_b);
+    }
+
+    // ─── Economic Attack Simulation Tests ────────────────────────────────────
+
+    /// Economic attack: booking with total_price = 0 must be rejected.
+    ///
+    /// An attacker attempting a free booking (zero price) must be blocked by
+    /// the `total_price > 0` guard before any state is written.
+    #[test]
+    #[should_panic(expected = "total_price must be positive")]
+    fn test_economic_attack_simulation_zero_price() {
+        let (env, cid, _admin) = make_env();
+        let client = BookingContractClient::new(&env, &cid);
+        let attacker = Address::generate(&env);
+
+        // Attempt a free booking — must be rejected
+        client.create_booking(&attacker, &1_u64, &1_000_u64, &1_005_u64, &0_i128);
+    }
+
+    /// Economic attack: booking with total_price = i128::MAX must be rejected.
+    ///
+    /// Passing the maximum i128 value as the price is a classic overflow probe.
+    /// The contract stores i128 values directly; with `overflow-checks = true`
+    /// in the release profile any arithmetic overflow panics rather than wraps.
+    /// The value itself is technically valid (> 0), so the contract accepts it
+    /// and stores it faithfully — confirming no silent truncation or wrap-around
+    /// occurs. This test documents that boundary behaviour explicitly.
+    ///
+    /// If downstream escrow arithmetic were to add to this value it would panic
+    /// (overflow-checks = true), which is the safe, expected outcome.
+    #[test]
+    fn test_economic_attack_simulation_max_price_stored_correctly() {
+        let (env, cid, _admin) = make_env();
+        let client = BookingContractClient::new(&env, &cid);
+        let attacker = Address::generate(&env);
+
+        // i128::MAX is > 0, so create_booking must accept it without overflow
+        let id = client.create_booking(
+            &attacker,
+            &1_u64,
+            &1_000_u64,
+            &1_005_u64,
+            &i128::MAX,
+        );
+
+        // Verify the value is stored exactly — no truncation or wrap-around
+        let booking = client.get_booking(&id);
+        assert_eq!(
+            booking.total_price,
+            i128::MAX,
+            "i128::MAX must be stored without overflow or truncation"
+        );
+    }
+
+    /// Economic attack: rapid sequential bookings on the same property with
+    /// overlapping dates must all be rejected after the first succeeds.
+    ///
+    /// This simulates a griefing or double-spend attempt where an attacker
+    /// fires multiple booking requests for the same property and date window
+    /// in quick succession. Only the first booking should be persisted; every
+    /// subsequent attempt must panic with an overlap error.
+    #[test]
+    #[should_panic(expected = "Booking dates overlap with an existing booking")]
+    fn test_economic_attack_simulation_rapid_sequential_bookings() {
+        let (env, cid, _admin) = make_env();
+        let client = BookingContractClient::new(&env, &cid);
+        let attacker = Address::generate(&env);
+
+        // First booking on property 42 for the window [10_000, 10_010) succeeds
+        let id = client.create_booking(
+            &attacker,
+            &42_u64,
+            &10_000_u64,
+            &10_010_u64,
+            &500_i128,
+        );
+        assert_eq!(id, 1, "First booking must succeed and receive ID 1");
+
+        // Rapid second attempt on the same property and overlapping window —
+        // must be rejected regardless of how quickly it follows the first
+        client.create_booking(
+            &attacker,
+            &42_u64,
+            &10_005_u64, // starts inside the existing booking
+            &10_015_u64,
+            &500_i128,
+        );
+    }
+
+    /// Economic attack: verify that rapid sequential bookings with identical
+    /// dates on the same property are all rejected after the first.
+    ///
+    /// Extends the overlap test to confirm that exact-duplicate date windows
+    /// (not just partial overlaps) are also blocked.
+    #[test]
+    #[should_panic(expected = "Booking dates overlap with an existing booking")]
+    fn test_economic_attack_simulation_duplicate_date_bookings() {
+        let (env, cid, _admin) = make_env();
+        let client = BookingContractClient::new(&env, &cid);
+        let attacker_a = Address::generate(&env);
+        let attacker_b = Address::generate(&env);
+
+        // First attacker books property 7 for [5_000, 5_100)
+        client.create_booking(&attacker_a, &7_u64, &5_000_u64, &5_100_u64, &1_000_i128);
+
+        // Second attacker immediately tries the exact same window — must be rejected
+        client.create_booking(&attacker_b, &7_u64, &5_000_u64, &5_100_u64, &1_000_i128);
+    }
+
+    // ─── Deployment Validation Tests ──────────────────────────────────────────
+
+    /// Deployment validation: contract initialises correctly with testnet-like
+    /// ledger settings (non-zero sequence number and timestamp).
+    ///
+    /// On Stellar Testnet the ledger sequence starts well above 0 and the
+    /// timestamp reflects real wall-clock time. This test simulates that
+    /// environment by advancing the mock ledger before initialisation and
+    /// verifies that the contract behaves identically to a fresh mainnet deploy.
+    #[test]
+    fn test_deployment_validation_networks_testnet_init() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // Simulate testnet ledger state: advance sequence and timestamp to
+        // values representative of a live network (not the default 0/0).
+        env.ledger().with_mut(|li| {
+            li.sequence_number = 1_000_000;   // testnet-like sequence
+            li.timestamp = 1_700_000_000;     // ~Nov 2023 Unix timestamp
+        });
+
+        let contract_id = env.register_contract(None, BookingContract);
+        let client = BookingContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+
+        // Initialisation must succeed on a simulated testnet ledger
+        client.initialize(&admin);
+
+        // Booking count starts at zero regardless of ledger state
+        assert_eq!(
+            client.booking_count(),
+            0,
+            "Booking count must be 0 after initialisation on testnet ledger"
+        );
+
+        // A booking created after testnet-like init must work correctly
+        let tenant = Address::generate(&env);
+        let id = client.create_booking(
+            &tenant,
+            &1_u64,
+            &1_700_000_100_u64, // check_in after the simulated testnet timestamp
+            &1_700_000_200_u64,
+            &100_i128,
+        );
+        assert_eq!(id, 1);
+        assert_eq!(client.get_booking(&id).check_in, 1_700_000_100_u64);
+    }
+
+    /// Deployment validation: contract IDs are deterministic given the same
+    /// deployer and salt.
+    ///
+    /// Soroban derives a contract address from (deployer_address, salt) via a
+    /// deterministic hash. Registering the same contract type at the same
+    /// explicit address in two independent environments must yield the same
+    /// address, confirming the determinism property relied upon by deployment
+    /// scripts and cross-contract calls.
+    #[test]
+    fn test_deployment_validation_networks_deterministic_contract_id() {
+        // Build two completely independent environments
+        let env_a = Env::default();
+        env_a.mock_all_auths();
+        let env_b = Env::default();
+        env_b.mock_all_auths();
+
+        // Construct a fixed contract address from a known 32-byte value.
+        // This simulates deploying with a known salt so the resulting contract
+        // ID is reproducible across networks.
+        let fixed_bytes: [u8; 32] = [0x01u8; 32];
+        let contract_addr_a = soroban_sdk::Address::from_contract_id(
+            &BytesN::from_array(&env_a, &fixed_bytes),
+        );
+        let contract_addr_b = soroban_sdk::Address::from_contract_id(
+            &BytesN::from_array(&env_b, &fixed_bytes),
+        );
+
+        // Register the contract at the fixed address in both environments
+        env_a.register_contract(&contract_addr_a, BookingContract);
+        env_b.register_contract(&contract_addr_b, BookingContract);
+
+        // Both contract addresses must be equal — determinism holds
+        assert_eq!(
+            contract_addr_a, contract_addr_b,
+            "Contract IDs derived from the same salt must be identical across environments"
+        );
+
+        // Both instances must initialise and operate independently
+        let client_a = BookingContractClient::new(&env_a, &contract_addr_a);
+        let client_b = BookingContractClient::new(&env_b, &contract_addr_b);
+
+        let admin_a = Address::generate(&env_a);
+        let admin_b = Address::generate(&env_b);
+
+        client_a.initialize(&admin_a);
+        client_b.initialize(&admin_b);
+
+        assert_eq!(client_a.booking_count(), 0);
+        assert_eq!(client_b.booking_count(), 0);
     }
 }

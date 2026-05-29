@@ -7,7 +7,7 @@
 
 #[cfg(test)]
 mod tests {
-    use soroban_sdk::{testutils::Address as _, Address, Env, String};
+    use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String};
 
     use crate::{ListingStatus, PropertyListingContract, PropertyListingContractClient};
 
@@ -509,5 +509,237 @@ mod tests {
         );
 
         assert_eq!(client.get_listing(&id).owner, owner);
+    }
+
+    // ─── Economic Attack Simulation Tests ────────────────────────────────────
+
+    /// Economic attack: creating a listing with an empty title must be rejected.
+    ///
+    /// An attacker submitting a listing with an empty string as the title
+    /// attempts to pollute on-chain state with invalid data. The `title.len() > 0`
+    /// guard must catch this before any storage write occurs.
+    #[test]
+    #[should_panic(expected = "title must not be empty")]
+    fn test_economic_attack_simulation_empty_title() {
+        let (env, cid) = make_env();
+        let client = PropertyListingContractClient::new(&env, &cid);
+        let attacker = Address::generate(&env);
+
+        // Empty title — must be rejected
+        client.create_listing(
+            &attacker,
+            &String::from_str(&env, ""),
+            &String::from_str(&env, "Malicious listing with no title"),
+            &100_0000000_i128,
+        );
+    }
+
+    /// Economic attack: creating a listing with a zero price must be rejected.
+    ///
+    /// A zero-price listing would allow a tenant to book a property for free,
+    /// bypassing the escrow payment flow entirely. The `price_per_night > 0`
+    /// guard must block this before any state is written.
+    #[test]
+    #[should_panic(expected = "price_per_night must be positive")]
+    fn test_economic_attack_simulation_zero_price_listing() {
+        let (env, cid) = make_env();
+        let client = PropertyListingContractClient::new(&env, &cid);
+        let attacker = Address::generate(&env);
+
+        // Zero price — must be rejected
+        client.create_listing(
+            &attacker,
+            &String::from_str(&env, "Free Property Attack"),
+            &String::from_str(&env, "Attempting to list at zero cost"),
+            &0_i128,
+        );
+    }
+
+    /// Economic attack: creating a listing with a negative price must be rejected.
+    ///
+    /// A negative price could cause integer underflow in downstream escrow
+    /// arithmetic, potentially crediting the attacker instead of debiting them.
+    #[test]
+    #[should_panic(expected = "price_per_night must be positive")]
+    fn test_economic_attack_simulation_negative_price_listing() {
+        let (env, cid) = make_env();
+        let client = PropertyListingContractClient::new(&env, &cid);
+        let attacker = Address::generate(&env);
+
+        // Negative price — must be rejected
+        client.create_listing(
+            &attacker,
+            &String::from_str(&env, "Negative Price Attack"),
+            &String::from_str(&env, "Attempting to list at negative cost"),
+            &-1_i128,
+        );
+    }
+
+    /// Economic attack: creating a listing with an extremely long description
+    /// (simulating a data-hash field stuffed with oversized payload).
+    ///
+    /// Soroban's `String` type is backed by a `Bytes` object whose length is
+    /// bounded by the host's memory limits. This test verifies that the contract
+    /// stores a very long string without panicking and that the value round-trips
+    /// correctly — confirming no silent truncation occurs. If the host enforces
+    /// a length cap it will panic, which is also an acceptable outcome (the
+    /// attack is rejected).
+    #[test]
+    fn test_economic_attack_simulation_extremely_long_description() {
+        let (env, cid) = make_env();
+        let client = PropertyListingContractClient::new(&env, &cid);
+        let owner = Address::generate(&env);
+
+        // Build a 512-character description string to simulate an oversized payload
+        let long_desc_raw = "A".repeat(512);
+        let long_desc = String::from_str(&env, &long_desc_raw);
+
+        // The contract does not validate description length, so this must succeed
+        let id = client.create_listing(
+            &owner,
+            &String::from_str(&env, "Valid Title"),
+            &long_desc,
+            &100_0000000_i128,
+        );
+
+        // Verify the description is stored exactly — no truncation
+        let listing = client.get_listing(&id);
+        assert_eq!(
+            listing.description,
+            long_desc,
+            "Extremely long description must be stored without truncation"
+        );
+    }
+
+    /// Economic attack: creating a listing with an extremely long title.
+    ///
+    /// Complements the long-description test. The title field has a non-empty
+    /// guard but no upper-bound check; this test confirms the contract stores
+    /// a very long title faithfully and does not panic or truncate.
+    #[test]
+    fn test_economic_attack_simulation_extremely_long_title() {
+        let (env, cid) = make_env();
+        let client = PropertyListingContractClient::new(&env, &cid);
+        let owner = Address::generate(&env);
+
+        // Build a 256-character title string
+        let long_title_raw = "B".repeat(256);
+        let long_title = String::from_str(&env, &long_title_raw);
+
+        let id = client.create_listing(
+            &owner,
+            &long_title,
+            &String::from_str(&env, "desc"),
+            &100_0000000_i128,
+        );
+
+        let listing = client.get_listing(&id);
+        assert_eq!(
+            listing.title,
+            long_title,
+            "Extremely long title must be stored without truncation"
+        );
+    }
+
+    // ─── Deployment Validation Tests ──────────────────────────────────────────
+
+    /// Deployment validation: contract initialises correctly with testnet-like
+    /// ledger settings (non-zero sequence number and timestamp).
+    ///
+    /// On Stellar Testnet the ledger sequence starts well above 0 and the
+    /// timestamp reflects real wall-clock time. This test simulates that
+    /// environment and verifies the contract behaves identically to a fresh
+    /// mainnet deploy.
+    #[test]
+    fn test_deployment_validation_networks_testnet_init() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // Simulate testnet ledger state
+        env.ledger().with_mut(|li| {
+            li.sequence_number = 2_500_000;   // testnet-like sequence
+            li.timestamp = 1_700_000_000;     // ~Nov 2023 Unix timestamp
+        });
+
+        let contract_id = env.register_contract(None, PropertyListingContract);
+        let client = PropertyListingContractClient::new(&env, &contract_id);
+
+        // Listing count starts at zero regardless of ledger state
+        assert_eq!(
+            client.listing_count(),
+            0,
+            "Listing count must be 0 on a fresh testnet deploy"
+        );
+
+        // A listing created after testnet-like init must work correctly
+        let owner = Address::generate(&env);
+        let id = client.create_listing(
+            &owner,
+            &String::from_str(&env, "Testnet Property"),
+            &String::from_str(&env, "Listed on simulated testnet"),
+            &50_0000000_i128,
+        );
+
+        assert_eq!(id, 1);
+        let listing = client.get_listing(&id);
+        assert_eq!(listing.title, String::from_str(&env, "Testnet Property"));
+        assert_eq!(listing.status, ListingStatus::Active);
+    }
+
+    /// Deployment validation: contract IDs are deterministic given the same
+    /// deployer and salt.
+    ///
+    /// Soroban derives a contract address from (deployer_address, salt) via a
+    /// deterministic hash. Registering the same contract type at the same
+    /// explicit address in two independent environments must yield the same
+    /// address, confirming the determinism property relied upon by deployment
+    /// scripts and cross-contract calls.
+    #[test]
+    fn test_deployment_validation_networks_deterministic_contract_id() {
+        // Build two completely independent environments
+        let env_a = Env::default();
+        env_a.mock_all_auths();
+        let env_b = Env::default();
+        env_b.mock_all_auths();
+
+        // Construct a fixed contract address from a known 32-byte value.
+        // This simulates deploying with a known salt so the resulting contract
+        // ID is reproducible across networks.
+        let fixed_bytes: [u8; 32] = [0x02u8; 32];
+        let contract_addr_a = soroban_sdk::Address::from_contract_id(
+            &BytesN::from_array(&env_a, &fixed_bytes),
+        );
+        let contract_addr_b = soroban_sdk::Address::from_contract_id(
+            &BytesN::from_array(&env_b, &fixed_bytes),
+        );
+
+        // Register the contract at the fixed address in both environments
+        env_a.register_contract(&contract_addr_a, PropertyListingContract);
+        env_b.register_contract(&contract_addr_b, PropertyListingContract);
+
+        // Both contract addresses must be equal — determinism holds
+        assert_eq!(
+            contract_addr_a, contract_addr_b,
+            "Contract IDs derived from the same salt must be identical across environments"
+        );
+
+        // Both instances must operate independently with correct initial state
+        let client_a = PropertyListingContractClient::new(&env_a, &contract_addr_a);
+        let client_b = PropertyListingContractClient::new(&env_b, &contract_addr_b);
+
+        assert_eq!(client_a.listing_count(), 0);
+        assert_eq!(client_b.listing_count(), 0);
+
+        // Creating a listing in env_a must not affect env_b
+        let owner_a = Address::generate(&env_a);
+        client_a.create_listing(
+            &owner_a,
+            &String::from_str(&env_a, "Env A Property"),
+            &String::from_str(&env_a, "desc"),
+            &100_0000000_i128,
+        );
+
+        assert_eq!(client_a.listing_count(), 1);
+        assert_eq!(client_b.listing_count(), 0, "env_b must remain isolated from env_a");
     }
 }

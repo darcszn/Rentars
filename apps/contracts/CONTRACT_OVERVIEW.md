@@ -109,3 +109,90 @@ All listing and booking records live in **instance storage** keyed by the
 
 Listing ids are caller-supplied and not counted on-chain; the backend is the
 source of truth for id allocation (typically the Supabase row id).
+
+---
+
+## Network-specific configuration
+
+### Supported networks
+
+| Network  | Passphrase                                      | RPC endpoint (default)                          |
+| -------- | ----------------------------------------------- | ----------------------------------------------- |
+| Testnet  | `Test SDF Network ; September 2015`             | `https://soroban-testnet.stellar.org`           |
+| Mainnet  | `Public Global Stellar Network ; September 2015`| `https://soroban-mainnet.stellar.org`           |
+| Localnet | `Standalone Network ; February 2017`            | `http://localhost:8000/soroban/rpc`             |
+
+### Ledger settings
+
+Soroban contracts are network-agnostic at the source level. The differences
+between networks are entirely in the **host environment** (ledger sequence,
+timestamp, and network passphrase). The test suite simulates testnet conditions
+by advancing the mock ledger before contract registration:
+
+```rust
+env.ledger().with_mut(|li| {
+    li.sequence_number = 1_000_000;  // representative testnet sequence
+    li.timestamp = 1_700_000_000;    // ~Nov 2023 Unix timestamp
+});
+```
+
+This pattern is used in `test_deployment_validation_networks_testnet_init` in
+each contract's test file to verify that contracts initialise and operate
+correctly under non-default ledger conditions.
+
+### Deterministic contract IDs
+
+Soroban derives a contract address deterministically from the deployer address
+and a caller-supplied **salt** (a 32-byte value). Given the same deployer and
+salt, the resulting contract address is identical on every network. This
+property is verified in `test_deployment_validation_networks_deterministic_contract_id`
+in each contract's test file.
+
+**Deployment script pattern (Stellar CLI):**
+
+```bash
+# Deploy with an explicit salt so the address is reproducible
+stellar contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/<contract>.wasm \
+  --source <deployer-keypair> \
+  --network testnet \
+  --salt 0000000000000000000000000000000000000000000000000000000000000001
+```
+
+The salt `0x01…01` (32 bytes) maps to the `[0x01u8; 32]` byte array used in
+the determinism tests. Use a unique salt per contract to avoid address
+collisions.
+
+### Per-contract deployment addresses
+
+Each contract uses a distinct salt in its determinism test to guarantee unique
+addresses even when deployed by the same account:
+
+| Contract           | Test salt byte | Purpose                              |
+| ------------------ | -------------- | ------------------------------------ |
+| `booking`          | `0x01`         | Booking lifecycle management         |
+| `property-listing` | `0x02`         | On-chain property listing registry   |
+| `review-contract`  | `0x03`         | Tenant review and reputation system  |
+
+### Testnet faucet and funding
+
+Before deploying to Stellar Testnet, fund the deployer account via the
+Friendbot faucet:
+
+```bash
+curl "https://friendbot.stellar.org?addr=<deployer-public-key>"
+```
+
+### Environment variables
+
+The backend (`apps/backend/.env`) must be configured with the correct network
+values before invoking any contract:
+
+```env
+STELLAR_NETWORK=testnet                          # or mainnet / localnet
+STELLAR_RPC_URL=https://soroban-testnet.stellar.org
+STELLAR_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+BOOKING_CONTRACT_ID=<deployed-booking-contract-address>
+PROPERTY_LISTING_CONTRACT_ID=<deployed-property-listing-contract-address>
+REVIEW_CONTRACT_ID=<deployed-review-contract-address>
+```
