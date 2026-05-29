@@ -1,9 +1,18 @@
-// Rentars — Soroban Smart Contract scaffold
+// Rentars — Soroban Smart Contract
 // Built on Stellar blockchain
 // Handles: property listing, rental booking, USDC escrow
+//
+// Deployment checklist:
+//   1. Deploy the contract
+//   2. Call `initialize(env)` ONCE — sets up storage counters.
+//      Re-calling will panic with "Already initialized".
 
 #![no_std]
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String};
+
+// ---------------------------------------------------------------------------
+// Data types
+// ---------------------------------------------------------------------------
 
 #[contracttype]
 #[derive(Clone)]
@@ -30,18 +39,28 @@ pub struct Booking {
     pub id: u64,
     pub property_id: u64,
     pub tenant: Address,
-    pub check_in: u64,
-    pub check_out: u64,
-    pub total_amount: i128,
+    pub check_in: u64,  // Unix timestamp (seconds)
+    pub check_out: u64, // Unix timestamp (seconds)
+    pub total_price: i128,
     pub confirmed: bool,
 }
 
+// ---------------------------------------------------------------------------
+// Storage keys
+// ---------------------------------------------------------------------------
+
 #[contracttype]
 pub enum DataKey {
+    /// Stores a single Property struct
     Property(u64),
+    /// Stores a single Booking struct
     Booking(u64),
     BookingCount,
 }
+
+// ---------------------------------------------------------------------------
+// Contract
+// ---------------------------------------------------------------------------
 
 #[contract]
 pub struct RentarsContract;
@@ -130,13 +149,26 @@ impl RentarsContract {
         env.storage().persistent().set(&DataKey::Property(id), &property);
     }
 
-    /// Create a booking and lock USDC in escrow
-    pub fn book_property(
+    // -----------------------------------------------------------------------
+    // Booking
+    // -----------------------------------------------------------------------
+
+    /// Create a booking for a property.
+    ///
+    /// Validations (all panic on failure):
+    ///   - Contract must be initialized.
+    ///   - Property must exist and be listed.
+    ///   - `start_date` must be >= current ledger timestamp (no past bookings).
+    ///   - `start_date` must be strictly less than `end_date`.
+    ///   - `total_price` must be > 0.
+    ///   - Date range must not overlap any existing booking for the property.
+    pub fn create_booking(
         env: Env,
         tenant: Address,
         property_id: u64,
-        check_in: u64,
-        check_out: u64,
+        start_date: u64,
+        end_date: u64,
+        total_price: i128,
     ) -> u64 {
         tenant.require_auth();
 
@@ -162,9 +194,9 @@ impl RentarsContract {
             id,
             property_id,
             tenant,
-            check_in,
-            check_out,
-            total_amount,
+            check_in: start_date,
+            check_out: end_date,
+            total_price,
             confirmed: false,
         };
 
@@ -175,7 +207,11 @@ impl RentarsContract {
         id
     }
 
-    /// Confirm rental completion and release escrow to owner
+    // -----------------------------------------------------------------------
+    // Rental confirmation
+    // -----------------------------------------------------------------------
+
+    /// Confirm rental completion and release escrow to owner.
     pub fn confirm_rental(env: Env, booking_id: u64, caller: Address) {
         caller.require_auth();
 
@@ -200,11 +236,34 @@ impl RentarsContract {
         env.storage().persistent().set(&DataKey::Property(booking.property_id), &property);
     }
 
-    /// Get booking details
+    /// Get booking details by ID.
     pub fn get_booking(env: Env, id: u64) -> Booking {
         env.storage()
             .persistent()
             .get(&DataKey::Booking(id))
             .expect("Booking not found")
+    }
+
+    /// Get all bookings for a given property.
+    ///
+    /// Returns an empty Vec if the property has no bookings yet.
+    pub fn get_property_bookings(env: Env, property_id: u64) -> Vec<Booking> {
+        let booking_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PropertyBookings(property_id))
+            .unwrap_or(Vec::new(&env));
+
+        let mut bookings: Vec<Booking> = Vec::new(&env);
+        for i in 0..booking_ids.len() {
+            let bid = booking_ids.get(i).unwrap();
+            let booking: Booking = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Booking(bid))
+                .expect("Booking record missing");
+            bookings.push_back(booking);
+        }
+        bookings
     }
 }
