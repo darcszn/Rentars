@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+import { AuthProvider } from '@/hooks/useUserRole';
 import './globals.css';
 import { Navbar } from '@/components/layout/Navbar';
 import { Providers } from '@/components/shared/layout/providers';
@@ -14,12 +15,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en">
       <body className={inter.className}>
-        <Providers>
-          <Navbar />
-          {children}
-        </Providers>
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );
