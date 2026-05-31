@@ -13,7 +13,7 @@ export const app = express();
 app.use(express.json());
 app.use(
   cors({
-    origin: [process.env.CORS_ORIGIN || 'http://localhost:3001'],
+    origin: [env.CORS_ORIGIN],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
@@ -30,4 +30,5 @@ app.use(errorMiddleware);
 const PORT = parseInt(process.env.PORT || '3000', 10);
 app.listen(PORT, () => {
   console.log(`🚀 Rentars API running on http://localhost:${PORT}`);
+  startSyncScheduler();
 });

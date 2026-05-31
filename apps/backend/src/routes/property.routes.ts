@@ -7,6 +7,8 @@ import {
   updatePropertyHandler,
 } from '../controllers/property.controller.js';
 import { authenticate } from '../middleware/auth.middleware.js';
+import { upload } from '../middleware/multer.js';
+import { uploadPropertyImage } from '../middleware/upload.middleware.js';
 
 const router = Router();
 
