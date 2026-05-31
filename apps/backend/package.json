@@ -9,8 +9,8 @@
     "build": "bun build ./src/index.ts --outdir ./dist",
     "start": "bun run dist/index.js",
     "test": "bun test",
-    "test:integration": "bun test tests/integration",
-    "test:testnet": "RUN_TESTNET_TESTS=true bun test tests/integration/blockchain-integration.test.ts"
+    "test:api": "bash tests/api/simple.test.sh && bash tests/api/endpoints.test.sh && bash tests/api/profile.test.sh",
+    "test:docker": "bash tests/docker/integration.test.sh"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^13.3.0",
