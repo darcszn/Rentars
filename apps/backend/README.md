@@ -1,4 +1,34 @@
-# Docker Setup for Rentars Backend
+# Rentars Backend
+
+Node.js/Express API (Bun runtime) for the Rentars decentralized rental platform.
+
+## Quick Start
+
+```bash
+# From monorepo root
+yarn workspace rentars-backend dev
+
+# Or from this directory
+bun run dev
+```
+
+Runs on **http://localhost:3000**
+
+## Scripts
+
+| Command | Description |
+|---|---|
+| `bun run dev` | Start with hot reload |
+| `bun run build` | Production build |
+| `bun test` | Run tests |
+
+## Environment
+
+Copy `.env.example` to `.env` and fill in the required values.
+
+---
+
+## Docker Setup
 
 ## Development
 
