@@ -30,6 +30,9 @@ app.use('/auth', authRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/properties', propertyRoutes);
 app.use('/api/locations', locationRoutes);
+app.use('/api/reviews', reviewRoutes);
+app.use('/api/wishlists', wishlistRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Health check
 app.get('/health', (_req, res) => {
