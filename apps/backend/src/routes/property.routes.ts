@@ -6,6 +6,7 @@ import {
   getProperty,
   updatePropertyHandler,
 } from '@/controllers/property.controller.js';
+import { searchPropertiesEndpoint } from '@/controllers/propertySearch.controller.js';
 import {
   uploadImage,
   listImages,
