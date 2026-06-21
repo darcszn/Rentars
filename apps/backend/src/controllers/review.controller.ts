@@ -5,6 +5,10 @@ import {
   getReviewsForProperty,
   getReviewsForUser,
   getAverageRating,
+  addHostResponse,
+  flagReview,
+  moderateReview,
+  getFlaggedReviews,
 } from '../services/review.service.js';
 
 export async function createReview(req: AuthRequest, res: Response): Promise<void> {
@@ -49,4 +53,60 @@ export async function getUserAverageRating(req: Request, res: Response): Promise
     return;
   }
   res.json({ average: result.data });
+}
+
+export async function respondToReview(req: AuthRequest, res: Response): Promise<void> {
+  const hostId = req.userId;
+  if (!hostId) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const { response } = req.body;
+  if (!response || typeof response !== 'string' || !response.trim()) {
+    res.status(400).json({ error: 'response is required' });
+    return;
+  }
+  const result = await addHostResponse(req.params.id, hostId, response.trim());
+  if (!result.success) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json(result.data);
+}
+
+export async function reportReview(req: AuthRequest, res: Response): Promise<void> {
+  const userId = req.userId;
+  if (!userId) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const result = await flagReview(req.params.id, userId);
+  if (!result.success) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json({ message: 'Review reported for moderation' });
+}
+
+export async function moderateReviewHandler(req: AuthRequest, res: Response): Promise<void> {
+  const { approve } = req.body;
+  if (typeof approve !== 'boolean') {
+    res.status(400).json({ error: 'approve (boolean) is required' });
+    return;
+  }
+  const result = await moderateReview(req.params.id, approve);
+  if (!result.success) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json(result.data);
+}
+
+export async function listFlaggedReviews(_req: Request, res: Response): Promise<void> {
+  const result = await getFlaggedReviews();
+  if (!result.success) {
+    res.status(500).json({ error: result.error });
+    return;
+  }
+  res.json(result.data);
 }

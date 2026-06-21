@@ -33,6 +33,33 @@ export async function searchPropertiesByQuery(query: string): Promise<ServiceRes
     return { success: false, error: error.message };
   }
 
-  return { success: true, data: (data ?? []) as Property[] };
+  const properties = (data ?? []) as Property[];
+  if (properties.length === 0) return { success: true, data: [] };
+
+  // Fetch approved review averages to boost ranking by reputation
+  const propertyIds = properties.map((p) => p.id);
+  const { data: reviewData } = await supabase
+    .from('reviews')
+    .select('property_id, rating')
+    .in('property_id', propertyIds)
+    .eq('is_approved', true);
+
+  const reputationMap = new Map<string, { sum: number; count: number }>();
+  for (const r of (reviewData ?? []) as { property_id: string; rating: number }[]) {
+    const entry = reputationMap.get(r.property_id) ?? { sum: 0, count: 0 };
+    entry.sum += r.rating;
+    entry.count += 1;
+    reputationMap.set(r.property_id, entry);
+  }
+
+  // Score = avg_rating * log(1 + review_count); unreviewed properties score 0
+  const scored = properties.map((p) => {
+    const rep = reputationMap.get(p.id);
+    const score = rep ? (rep.sum / rep.count) * Math.log1p(rep.count) : 0;
+    return { property: p, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+
+  return { success: true, data: scored.map((s) => s.property) };
 }
 

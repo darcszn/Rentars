@@ -4,6 +4,7 @@ import authRoutes from './auth.routes.js';
 import bookingRoutes from './booking.routes.js';
 import propertyRoutes from './property.routes.js';
 import locationRoutes from './location.routes.js';
+import reviewRoutes from './review.routes.js';
 
 const router = Router();
 
@@ -76,6 +77,7 @@ apiV1.use('/auth', authRoutes);
 apiV1.use('/bookings', bookingRoutes);
 apiV1.use('/properties', propertyRoutes);
 apiV1.use('/locations', locationRoutes);
+apiV1.use('/reviews', reviewRoutes);
 
 router.use('/api/v1', apiV1);
 
