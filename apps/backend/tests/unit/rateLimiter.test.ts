@@ -29,7 +29,7 @@ function makeReq(overrides: Partial<Request> = {}): Request {
   return { ip: '127.0.0.1', path: '/test', userId: undefined, headers: {}, ...overrides } as unknown as Request;
 }
 
-function makeRes(): { res: Response; status: jest.Mock; json: jest.Mock; setHeader: jest.Mock } {
+function makeRes(): { res: Response; status: ReturnType<typeof vi.fn>; json: ReturnType<typeof vi.fn>; setHeader: ReturnType<typeof vi.fn> } {
   const res: any = {};
   res.status = vi.fn().mockReturnValue(res);
   res.json = vi.fn().mockReturnValue(res);

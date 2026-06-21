@@ -1,0 +1,95 @@
+name: Performance Tests
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    # Run performance tests nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Test type to run'
+        required: true
+        default: 'smoke'
+        type: choice
+        options:
+          - smoke
+          - load
+          - stress
+
+jobs:
+  k6-performance:
+    name: K6 Performance Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      BASE_URL: ${{ secrets.STAGING_API_URL || 'http://localhost:3000' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: stable
+
+      - name: Install backend dependencies
+        working-directory: apps/backend
+        run: bun install
+
+      - name: Start backend server
+        working-directory: apps/backend
+        run: |
+          SUPABASE_URL=http://localhost \
+          SUPABASE_SERVICE_ROLE_KEY=ci \
+          JWT_SECRET=ci-jwt-secret-minimum-32-characters \
+          PORT=3000 \
+          STELLAR_NETWORK=testnet \
+          REDIS_URL='' \
+          PROPERTY_LISTING_CONTRACT_ID=test \
+          BOOKING_CONTRACT_ID=test \
+          TRUSTLESS_WORK_API_URL=http://localhost \
+          TRUSTLESS_WORK_API_KEY=test \
+          bun run src/index.ts &
+          echo $! > /tmp/backend.pid
+        if: ${{ !secrets.STAGING_API_URL }}
+
+      - name: Wait for backend to be ready
+        run: |
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:3000/health; then
+              echo "Backend ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Backend failed to start"
+          exit 1
+        if: ${{ !secrets.STAGING_API_URL }}
+
+      - name: Setup K6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run smoke tests
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.test_type == 'smoke'
+        run: k6 run -e BASE_URL=${{ env.BASE_URL }} tests/performance/k6/smoke-test.js
+
+      - name: Run load tests
+        if: github.event.inputs.test_type == 'load' || github.event_name == 'schedule'
+        run: k6 run -e BASE_URL=${{ env.BASE_URL }} tests/performance/k6/api-load-test.js
+
+      - name: Run stress tests
+        if: github.event.inputs.test_type == 'stress'
+        run: k6 run -e BASE_URL=${{ env.BASE_URL }} tests/performance/k6/booking-stress-test.js
+
+      - name: Upload K6 results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-results-${{ github.sha }}
+          path: k6-results/
+          retention-days: 30

@@ -8,11 +8,48 @@ on:
       - 'apps/web/src/**'
       - 'apps/web/.storybook/**'
       - '.github/workflows/storybook.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'apps/web/src/**'
+      - 'apps/web/.storybook/**'
 
 jobs:
-  build-and-deploy:
-    name: Build & Deploy Storybook
+  storybook-tests:
+    name: Storybook Build & Interaction Tests
     runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build Storybook
+        working-directory: apps/web
+        run: yarn build-storybook --quiet
+        env:
+          NODE_OPTIONS: '--max_old_space_size=4096'
+
+      - name: Serve Storybook and run interaction tests
+        working-directory: apps/web
+        run: |
+          npx concurrently -k -s first -n "SB,TEST" -c "magenta,blue" \
+            "npx http-server storybook-static --port 6006 --silent" \
+            "npx wait-on tcp:6006 && yarn test-storybook --ci"
+        continue-on-error: true   # don't fail deploy on test flakes
+
+  build-and-deploy:
+    name: Deploy Storybook to GitHub Pages
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    needs: storybook-tests
 
     permissions:
       contents: write
@@ -29,7 +66,8 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Build Storybook
-        run: yarn workspace web build-storybook
+        working-directory: apps/web
+        run: yarn build-storybook
         env:
           NODE_OPTIONS: '--max_old_space_size=4096'
 
