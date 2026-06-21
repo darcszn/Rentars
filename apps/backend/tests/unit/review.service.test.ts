@@ -2,7 +2,7 @@
  * Unit tests for review service.
  */
 
-import { describe, it, expect, beforeEach, mock, spyOn } from 'bun:test';
+import { describe, it, expect, beforeEach, mock } from 'bun:test';
 
 // ── Supabase mock ─────────────────────────────────────────────────────────────
 
@@ -18,8 +18,6 @@ const mockSupabase = {
     insert: mockInsert,
   })),
 };
-
-import.meta.mock = true;
 
 // Stub the supabase module
 const supabaseMod = await import('../../src/config/supabase.js');

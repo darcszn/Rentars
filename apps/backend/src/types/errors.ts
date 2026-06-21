@@ -1,4 +1,6 @@
 // Domain-specific error types
+import { BookingError } from '../errors/booking.errors.js';
+export { BookingError } from '../errors/booking.errors.js';
 
 export enum EscrowErrorCode {
   ESCROW_CREATION_FAILED = 'ESCROW_CREATION_FAILED',

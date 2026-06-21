@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@/tests/utils/test-utils';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 
 // ── Minimal auth page stubs ───────────────────────────────────────────────────
 
@@ -13,8 +14,8 @@ function LoginPage({
 }: {
   onLogin?: (token: string) => void;
 }) {
-  const [error, setError] = vi.fn().mockImplementationOnce(() => {}).mockReturnValue({}) as any;
-  const [loading, setLoading] = vi.fn().mockReturnValue({}) as any;
+  const [, setToken] = useState('');
+
   return (
     <form
       onSubmit={async (e) => {
@@ -30,6 +31,7 @@ function LoginPage({
         if (res.ok) {
           const data = await res.json();
           localStorage.setItem('token', data.token);
+          setToken(data.token);
           onLogin?.(data.token);
         }
       }}
@@ -96,7 +98,11 @@ describe('Auth flow integration', () => {
       const onLogin = vi.fn();
       fetchMock.mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ token: 'jwt-token-123', user: { id: 'u1', email: 'user@example.com' } }),
+        json: () =>
+          Promise.resolve({
+            token: 'jwt-token-123',
+            user: { id: 'u1', email: 'user@example.com' },
+          }),
       } as Response);
 
       render(<LoginPage onLogin={onLogin} />);
@@ -108,7 +114,7 @@ describe('Auth flow integration', () => {
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(
           expect.stringContaining('/auth/login'),
-          expect.objectContaining({ method: 'POST' })
+          expect.objectContaining({ method: 'POST' }),
         );
         expect(onLogin).toHaveBeenCalledWith('jwt-token-123');
         expect(localStorage.getItem('token')).toBe('jwt-token-123');
@@ -156,7 +162,7 @@ describe('Auth flow integration', () => {
           expect.objectContaining({
             method: 'POST',
             body: expect.stringContaining('Alice Smith'),
-          })
+          }),
         );
         expect(onRegister).toHaveBeenCalled();
       });
