@@ -46,11 +46,7 @@ export interface CreateBookingInput {
  * Interface for blockchain dependencies — kept narrow so it can be mocked in tests.
  */
 export interface BlockchainServices {
-  checkAvailability(
-    propertyOnChainId: bigint,
-    checkIn: bigint,
-    checkOut: bigint,
-  ): Promise<boolean>;
+  checkAvailability(propertyOnChainId: bigint, checkIn: bigint, checkOut: bigint): Promise<boolean>;
 
   createBookingOnChain(
     propertyId: bigint,
@@ -112,11 +108,7 @@ export class BookingService {
       return { success: false, error: 'Booking ID is required' };
     }
 
-    const { data, error } = await supabase
-      .from('bookings')
-      .select('*')
-      .eq('id', id)
-      .single();
+    const { data, error } = await supabase.from('bookings').select('*').eq('id', id).single();
 
     if (error) {
       return { success: false, error: 'Booking not found' };
@@ -137,9 +129,7 @@ export class BookingService {
    *   6. Insert booking into Supabase
    *   7. Create on-chain booking record
    */
-  async createBooking(
-    input: CreateBookingInput,
-  ): Promise<ServiceResponse<Booking>> {
+  async createBooking(input: CreateBookingInput): Promise<ServiceResponse<Booking>> {
     const { property_id, tenant_id, check_in, check_out, total_price } = input;
 
     if (!property_id || !tenant_id || !check_in || !check_out) {
@@ -191,20 +181,14 @@ export class BookingService {
     ]);
 
     // 3. Validate addresses
-    if (
-      !ownerStellarAddress ||
-      !StrKey.isValidEd25519PublicKey(ownerStellarAddress)
-    ) {
+    if (!ownerStellarAddress || !StrKey.isValidEd25519PublicKey(ownerStellarAddress)) {
       return {
         success: false,
         error: 'Property owner does not have a valid Stellar address',
       };
     }
 
-    if (
-      !buyerStellarAddress ||
-      !StrKey.isValidEd25519PublicKey(buyerStellarAddress)
-    ) {
+    if (!buyerStellarAddress || !StrKey.isValidEd25519PublicKey(buyerStellarAddress)) {
       return {
         success: false,
         error: 'Tenant does not have a valid Stellar address',
@@ -216,8 +200,7 @@ export class BookingService {
       const checkInTs = BigInt(Math.floor(checkInDate.getTime() / 1000));
       const checkOutTs = BigInt(Math.floor(checkOutDate.getTime() / 1000));
 
-      loggingService.logBlockchainOperation({
-        operation: 'checkAvailability',
+      loggingService.logBlockchainOperation('checkAvailability', {
         propertyId: property_id,
         userId: tenant_id,
       });
@@ -236,12 +219,15 @@ export class BookingService {
           };
         }
       } catch (err) {
-        loggingService.logBlockchainOperation({
-          operation: 'checkAvailability',
-          propertyId: property_id,
-          userId: tenant_id,
-          error: String(err),
-        });
+        loggingService.logBlockchainOperation(
+          'checkAvailability',
+          {
+            propertyId: property_id,
+            userId: tenant_id,
+          },
+          undefined,
+          String(err),
+        );
         console.warn('[BookingService] On-chain availability check failed:', err);
       }
     }
@@ -249,8 +235,7 @@ export class BookingService {
     // 5. Create TrustlessWork escrow
     let escrowId: string | undefined;
 
-    loggingService.logBlockchainOperation({
-      operation: 'createEscrow',
+    loggingService.logBlockchainOperation('createEscrow', {
       propertyId: property_id,
       userId: tenant_id,
     });
@@ -267,19 +252,21 @@ export class BookingService {
       });
       escrowId = escrowResponse.escrowId;
 
-      loggingService.logBlockchainOperation({
-        operation: 'createEscrow',
+      loggingService.logBlockchainOperation('createEscrow', {
         propertyId: property_id,
         userId: tenant_id,
         escrowId,
       });
     } catch (err) {
-      loggingService.logBlockchainOperation({
-        operation: 'createEscrow',
-        propertyId: property_id,
-        userId: tenant_id,
-        error: String(err),
-      });
+      loggingService.logBlockchainOperation(
+        'createEscrow',
+        {
+          propertyId: property_id,
+          userId: tenant_id,
+        },
+        undefined,
+        String(err),
+      );
       return {
         success: false,
         error: `Failed to create escrow: ${String(err)}`,
@@ -316,15 +303,16 @@ export class BookingService {
     const booking = bookingData as Booking;
 
     // Notify tenant
-    createNotification(tenant_id, 'booking_created', { booking_id: booking.id, property_id }).catch(() => {});
+    createNotification(tenant_id, 'booking_created', { booking_id: booking.id, property_id }).catch(
+      () => {},
+    );
 
     // 7. Create on-chain booking record (non-fatal on failure)
     if (prop.on_chain_id !== undefined && prop.on_chain_id !== null) {
       const checkInTs = BigInt(Math.floor(checkInDate.getTime() / 1000));
       const checkOutTs = BigInt(Math.floor(checkOutDate.getTime() / 1000));
 
-      loggingService.logBlockchainOperation({
-        operation: 'createBookingOnChain',
+      loggingService.logBlockchainOperation('createBookingOnChain', {
         bookingId: booking.id,
         propertyId: property_id,
         userId: tenant_id,
@@ -339,8 +327,7 @@ export class BookingService {
           BigInt(Math.round(total_price * 1e7)),
         );
 
-        loggingService.logBlockchainOperation({
-          operation: 'createBookingOnChain',
+        loggingService.logBlockchainOperation('createBookingOnChain', {
           bookingId: booking.id,
           propertyId: property_id,
           userId: tenant_id,
@@ -354,13 +341,16 @@ export class BookingService {
 
         booking.on_chain_id = Number(onChainId);
       } catch (err) {
-        loggingService.logBlockchainOperation({
-          operation: 'createBookingOnChain',
-          bookingId: booking.id,
-          propertyId: property_id,
-          userId: tenant_id,
-          error: String(err),
-        });
+        loggingService.logBlockchainOperation(
+          'createBookingOnChain',
+          {
+            bookingId: booking.id,
+            propertyId: property_id,
+            userId: tenant_id,
+          },
+          undefined,
+          String(err),
+        );
         console.warn('[BookingService] On-chain booking creation failed:', err);
       }
     }
@@ -374,10 +364,7 @@ export class BookingService {
    * Cancel a booking: cancel the escrow, update DB status, and update
    * the on-chain booking status to Cancelled.
    */
-  async cancelBooking(
-    bookingId: string,
-    userId: string,
-  ): Promise<ServiceResponse<Booking>> {
+  async cancelBooking(bookingId: string, userId: string): Promise<ServiceResponse<Booking>> {
     if (!bookingId) {
       return { success: false, error: 'Booking ID is required' };
     }
@@ -400,8 +387,7 @@ export class BookingService {
 
     // Cancel escrow
     if (booking.escrow_id) {
-      loggingService.logBlockchainOperation({
-        operation: 'cancelEscrow',
+      loggingService.logBlockchainOperation('cancelEscrow', {
         bookingId,
         userId,
         escrowId: booking.escrow_id,
@@ -410,13 +396,16 @@ export class BookingService {
       try {
         await trustlessWorkClient.cancelEscrow(booking.escrow_id);
       } catch (err) {
-        loggingService.logBlockchainOperation({
-          operation: 'cancelEscrow',
-          bookingId,
-          userId,
-          escrowId: booking.escrow_id,
-          error: String(err),
-        });
+        loggingService.logBlockchainOperation(
+          'cancelEscrow',
+          {
+            bookingId,
+            userId,
+            escrowId: booking.escrow_id,
+          },
+          undefined,
+          String(err),
+        );
         return {
           success: false,
           error: `Failed to cancel escrow: ${String(err)}`,
@@ -438,7 +427,9 @@ export class BookingService {
 
     // Notify tenant
     if (booking.tenant_id) {
-      createNotification(booking.tenant_id, 'booking_cancelled', { booking_id: bookingId }).catch(() => {});
+      createNotification(booking.tenant_id, 'booking_cancelled', { booking_id: bookingId }).catch(
+        () => {},
+      );
     }
 
     // Update on-chain status (non-fatal)
@@ -446,24 +437,23 @@ export class BookingService {
       const callerAddress = await fetchStellarAddress(userId);
 
       if (callerAddress) {
-        loggingService.logBlockchainOperation({
-          operation: 'cancelBookingOnChain',
+        loggingService.logBlockchainOperation('cancelBookingOnChain', {
           bookingId,
           userId,
         });
 
         try {
-          await this.blockchain.cancelBookingOnChain(
-            BigInt(booking.on_chain_id),
-            callerAddress,
-          );
+          await this.blockchain.cancelBookingOnChain(BigInt(booking.on_chain_id), callerAddress);
         } catch (err) {
-          loggingService.logBlockchainOperation({
-            operation: 'cancelBookingOnChain',
-            bookingId,
-            userId,
-            error: String(err),
-          });
+          loggingService.logBlockchainOperation(
+            'cancelBookingOnChain',
+            {
+              bookingId,
+              userId,
+            },
+            undefined,
+            String(err),
+          );
           console.warn('[BookingService] On-chain cancellation failed:', err);
         }
       }
@@ -478,10 +468,7 @@ export class BookingService {
    * Confirm a booking: release the escrow to the property owner, then update
    * DB and on-chain status to Confirmed.
    */
-  async confirmBooking(
-    bookingId: string,
-    userId: string,
-  ): Promise<ServiceResponse<Booking>> {
+  async confirmBooking(bookingId: string, userId: string): Promise<ServiceResponse<Booking>> {
     if (!bookingId) {
       return { success: false, error: 'Booking ID is required' };
     }
@@ -508,26 +495,25 @@ export class BookingService {
 
     // Release escrow to owner
     if (booking.escrow_id) {
-      loggingService.logBlockchainOperation({
-        operation: 'releaseEscrow',
+      loggingService.logBlockchainOperation('releaseEscrow', {
         bookingId,
         userId,
         escrowId: booking.escrow_id,
       });
 
       try {
-        await trustlessWorkClient.releaseEscrow(
-          booking.escrow_id,
-          'Booking confirmed by tenant',
-        );
+        await trustlessWorkClient.releaseEscrow(booking.escrow_id, 'Booking confirmed by tenant');
       } catch (err) {
-        loggingService.logBlockchainOperation({
-          operation: 'releaseEscrow',
-          bookingId,
-          userId,
-          escrowId: booking.escrow_id,
-          error: String(err),
-        });
+        loggingService.logBlockchainOperation(
+          'releaseEscrow',
+          {
+            bookingId,
+            userId,
+            escrowId: booking.escrow_id,
+          },
+          undefined,
+          String(err),
+        );
         return {
           success: false,
           error: `Failed to release escrow: ${String(err)}`,
@@ -549,7 +535,9 @@ export class BookingService {
 
     // Notify tenant
     if (booking.tenant_id) {
-      createNotification(booking.tenant_id, 'booking_confirmed', { booking_id: bookingId }).catch(() => {});
+      createNotification(booking.tenant_id, 'booking_confirmed', { booking_id: bookingId }).catch(
+        () => {},
+      );
     }
 
     // Update on-chain status (non-fatal)
@@ -557,8 +545,7 @@ export class BookingService {
       const callerAddress = await fetchStellarAddress(userId);
 
       if (callerAddress) {
-        loggingService.logBlockchainOperation({
-          operation: 'updateBookingStatusOnChain',
+        loggingService.logBlockchainOperation('updateBookingStatusOnChain', {
           bookingId,
           userId,
         });
@@ -570,12 +557,15 @@ export class BookingService {
             callerAddress,
           );
         } catch (err) {
-          loggingService.logBlockchainOperation({
-            operation: 'updateBookingStatusOnChain',
-            bookingId,
-            userId,
-            error: String(err),
-          });
+          loggingService.logBlockchainOperation(
+            'updateBookingStatusOnChain',
+            {
+              bookingId,
+              userId,
+            },
+            undefined,
+            String(err),
+          );
           console.warn('[BookingService] On-chain status update failed:', err);
         }
       }
@@ -594,10 +584,7 @@ export class BookingService {
    * @returns ServiceResponse with the updated booking
    * @throws Does not throw; errors are returned in the ServiceResponse
    */
-  async updateBooking(
-    id: string,
-    payload: Partial<Booking>,
-  ): Promise<ServiceResponse<Booking>> {
+  async updateBooking(id: string, payload: Partial<Booking>): Promise<ServiceResponse<Booking>> {
     if (!id) {
       return { success: false, error: 'Booking ID is required' };
     }
